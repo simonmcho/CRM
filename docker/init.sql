@@ -1,0 +1,2 @@
+-- This file runs when the PostgreSQL container starts
+-- Additional setup can be added here if needed
