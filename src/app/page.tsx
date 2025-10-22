@@ -1,10 +1,8 @@
-import { Button } from '@/components/ui/button'
-import { UserPlus, Calendar } from 'lucide-react'
-import Link from 'next/link'
 import { RoomTypesDisplay } from '@/components/room-types-display-server'
 import { AmenitiesDisplay } from '@/components/amenities-display-server'
 import { GuestsDisplay } from '@/components/guests-display-server'
 import { DashboardMetrics } from '@/components/dashboard-metrics-server'
+import { DashboardActions } from '@/components/dashboard-actions'
 
 export default function HomePage() {
   return (
@@ -14,18 +12,7 @@ export default function HomePage() {
           Hotel Management Dashboard
         </h2>
         <div className="flex items-center space-x-2">
-          <Link href="/guests">
-            <Button>
-              <UserPlus className="mr-2 h-4 w-4" />
-              Add Guest
-            </Button>
-          </Link>
-          <Link href="/bookings/new">
-            <Button>
-              <Calendar className="mr-2 h-4 w-4" />
-              New Booking
-            </Button>
-          </Link>
+          <DashboardActions />
         </div>
       </div>
 

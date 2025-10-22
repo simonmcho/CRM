@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 
 export async function GET() {
   try {
@@ -53,18 +54,35 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate total amount (simple calculation: nights * base price)
-    const checkInDate = new Date(checkIn)
-    const checkOutDate = new Date(checkOut)
-    const nights = Math.ceil(
-      (checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24)
-    )
+    // Work with date strings to completely avoid timezone issues
+    console.log('Received dates:', { checkIn, checkOut })
+
+    // Calculate nights using string dates
+    const checkInParts = checkIn.split('-').map(Number)
+    const checkOutParts = checkOut.split('-').map(Number)
+
+    const checkInMs = new Date(
+      checkInParts[0],
+      checkInParts[1] - 1,
+      checkInParts[2]
+    ).getTime()
+    const checkOutMs = new Date(
+      checkOutParts[0],
+      checkOutParts[1] - 1,
+      checkOutParts[2]
+    ).getTime()
+    const nights = Math.ceil((checkOutMs - checkInMs) / (1000 * 60 * 60 * 24))
+
+    console.log('Date calculation:', { checkIn, checkOut, nights })
+
     const totalAmount = nights * room.roomType.basePrice
 
     const booking = await prisma.booking.create({
       data: {
-        checkIn: checkInDate,
-        checkOut: checkOutDate,
+        checkIn: new Date(checkIn + 'T12:00:00Z'), // Use noon UTC to avoid date shifts
+        checkOut: new Date(checkOut + 'T12:00:00Z'), // Use noon UTC to avoid date shifts
         totalAmount,
+        status: 'CONFIRMED', // Set status to CONFIRMED instead of default PENDING
         guestId,
         roomId,
         hotelId,
@@ -80,6 +98,10 @@ export async function POST(request: NextRequest) {
         hotel: true,
       },
     })
+
+    // Revalidate pages that show booking counts or booking data
+    revalidatePath('/') // Dashboard page
+    revalidatePath('/bookings') // Bookings list page
 
     return NextResponse.json(booking, { status: 201 })
   } catch (error) {

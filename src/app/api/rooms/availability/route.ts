@@ -16,8 +16,9 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const checkInDate = new Date(checkIn)
-    const checkOutDate = new Date(checkOut)
+    // Use noon UTC to avoid timezone date shifts
+    const checkInDate = new Date(checkIn + 'T12:00:00Z')
+    const checkOutDate = new Date(checkOut + 'T12:00:00Z')
 
     if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())) {
       return NextResponse.json(
@@ -44,7 +45,7 @@ export async function GET(request: NextRequest) {
       hotelId,
       checkIn: checkInDate,
       checkOut: checkOutDate,
-      roomTypeId: roomTypeId || undefined
+      roomTypeId: roomTypeId || undefined,
     })
 
     return NextResponse.json(availableRooms)
@@ -69,14 +70,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const checkInDate = new Date(checkIn)
-    const checkOutDate = new Date(checkOut)
+    // Use noon UTC to avoid timezone date shifts
+    const checkInDate = new Date(checkIn + 'T12:00:00Z')
+    const checkOutDate = new Date(checkOut + 'T12:00:00Z')
 
-    const availabilitySummary = await RoomAvailabilityService.getAvailabilitySummary({
-      hotelId,
-      checkIn: checkInDate,
-      checkOut: checkOutDate
-    })
+    const availabilitySummary =
+      await RoomAvailabilityService.getAvailabilitySummary({
+        hotelId,
+        checkIn: checkInDate,
+        checkOut: checkOutDate,
+      })
 
     return NextResponse.json(availabilitySummary)
   } catch (error) {

@@ -17,6 +17,7 @@ import {
   Plus,
 } from 'lucide-react'
 import Link from 'next/link'
+import { BookingModal } from '@/components/booking-modal'
 
 async function getBookings() {
   try {
@@ -70,8 +71,12 @@ function formatDate(dateString: string | Date) {
 }
 
 function calculateNights(checkIn: string | Date, checkOut: string | Date) {
-  const start = new Date(checkIn)
-  const end = new Date(checkOut)
+  const start = new Date(
+    typeof checkIn === 'string' ? checkIn + 'T12:00:00Z' : checkIn
+  )
+  const end = new Date(
+    typeof checkOut === 'string' ? checkOut + 'T12:00:00Z' : checkOut
+  )
   return Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
 }
 
@@ -87,12 +92,7 @@ export async function BookingsList() {
             {bookings.length} booking{bookings.length !== 1 ? 's' : ''} total
           </p>
         </div>
-        <Link href="/bookings/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Booking
-          </Button>
-        </Link>
+        <BookingModal />
       </div>
 
       {bookings.length === 0 ? (
@@ -104,12 +104,14 @@ export async function BookingsList() {
               <p className="mb-4 text-muted-foreground">
                 Get started by creating your first booking.
               </p>
-              <Link href="/bookings/new">
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create First Booking
-                </Button>
-              </Link>
+              <BookingModal
+                triggerButton={
+                  <Button>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create First Booking
+                  </Button>
+                }
+              />
             </div>
           </CardContent>
         </Card>

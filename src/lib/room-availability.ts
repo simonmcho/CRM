@@ -27,7 +27,7 @@ export class RoomAvailabilityService {
     hotelId,
     checkIn,
     checkOut,
-    roomTypeId
+    roomTypeId,
   }: AvailabilityQuery): Promise<AvailableRoom[]> {
     try {
       // First, get all rooms for the hotel (optionally filtered by room type)
@@ -35,7 +35,7 @@ export class RoomAvailabilityService {
         where: {
           hotelId,
           ...(roomTypeId && { roomTypeId }),
-          status: 'AVAILABLE' // Only consider rooms that are not out of service
+          status: 'AVAILABLE', // Only consider rooms that are not out of service
         },
         include: {
           roomType: {
@@ -43,10 +43,10 @@ export class RoomAvailabilityService {
               id: true,
               name: true,
               basePrice: true,
-              maxOccupancy: true
-            }
-          }
-        }
+              maxOccupancy: true,
+            },
+          },
+        },
       })
 
       // Get all bookings that overlap with the requested date range
@@ -54,44 +54,48 @@ export class RoomAvailabilityService {
         where: {
           hotelId,
           status: {
-            in: ['CONFIRMED', 'CHECKED_IN'] // Only consider active bookings
+            in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'], // Consider all active bookings including pending
           },
           OR: [
             // Booking starts during our stay
             {
               checkIn: {
                 gte: checkIn,
-                lt: checkOut
-              }
+                lt: checkOut,
+              },
             },
-            // Booking ends during our stay
+            // Booking ends during our stay (but room is available on checkout date)
             {
               checkOut: {
                 gt: checkIn,
-                lte: checkOut
-              }
+                lt: checkOut, // Changed from lte to lt - room available on checkout date
+              },
             },
             // Booking completely encompasses our stay
             {
               checkIn: {
-                lte: checkIn
+                lte: checkIn,
               },
               checkOut: {
-                gte: checkOut
-              }
-            }
-          ]
+                gt: checkOut, // Changed from gte to gt - room available on checkout date
+              },
+            },
+          ],
         },
         select: {
-          roomId: true
-        }
+          roomId: true,
+        },
       })
 
       // Get the room IDs that are booked
-      const bookedRoomIds = new Set(overlappingBookings.map(booking => booking.roomId))
+      const bookedRoomIds = new Set(
+        overlappingBookings.map((booking) => booking.roomId)
+      )
 
       // Filter out booked rooms
-      const availableRooms = allRooms.filter(room => !bookedRoomIds.has(room.id))
+      const availableRooms = allRooms.filter(
+        (room) => !bookedRoomIds.has(room.id)
+      )
 
       return availableRooms
     } catch (error) {
@@ -106,33 +110,39 @@ export class RoomAvailabilityService {
   static async getAvailabilitySummary({
     hotelId,
     checkIn,
-    checkOut
+    checkOut,
   }: Omit<AvailabilityQuery, 'roomTypeId'>) {
     try {
       const availableRooms = await this.getAvailableRooms({
         hotelId,
         checkIn,
-        checkOut
+        checkOut,
       })
 
       // Group by room type
-      const availabilityByType = availableRooms.reduce((acc, room) => {
-        const typeId = room.roomType.id
-        if (!acc[typeId]) {
-          acc[typeId] = {
-            roomType: room.roomType,
-            availableCount: 0,
-            rooms: []
+      const availabilityByType = availableRooms.reduce(
+        (acc, room) => {
+          const typeId = room.roomType.id
+          if (!acc[typeId]) {
+            acc[typeId] = {
+              roomType: room.roomType,
+              availableCount: 0,
+              rooms: [],
+            }
           }
-        }
-        acc[typeId].availableCount++
-        acc[typeId].rooms.push(room)
-        return acc
-      }, {} as Record<string, {
-        roomType: AvailableRoom['roomType']
-        availableCount: number
-        rooms: AvailableRoom[]
-      }>)
+          acc[typeId].availableCount++
+          acc[typeId].rooms.push(room)
+          return acc
+        },
+        {} as Record<
+          string,
+          {
+            roomType: AvailableRoom['roomType']
+            availableCount: number
+            rooms: AvailableRoom[]
+          }
+        >
+      )
 
       return Object.values(availabilityByType)
     } catch (error) {
@@ -147,7 +157,7 @@ export class RoomAvailabilityService {
   static async isRoomAvailable({
     roomId,
     checkIn,
-    checkOut
+    checkOut,
   }: {
     roomId: string
     checkIn: Date
@@ -158,31 +168,31 @@ export class RoomAvailabilityService {
         where: {
           roomId,
           status: {
-            in: ['CONFIRMED', 'CHECKED_IN']
+            in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'],
           },
           OR: [
             {
               checkIn: {
                 gte: checkIn,
-                lt: checkOut
-              }
+                lt: checkOut,
+              },
             },
             {
               checkOut: {
                 gt: checkIn,
-                lte: checkOut
-              }
+                lt: checkOut, // Changed from lte to lt - room available on checkout date
+              },
             },
             {
               checkIn: {
-                lte: checkIn
+                lte: checkIn,
               },
               checkOut: {
-                gte: checkOut
-              }
-            }
-          ]
-        }
+                gt: checkOut, // Changed from gte to gt - room available on checkout date
+              },
+            },
+          ],
+        },
       })
 
       return !conflictingBooking
@@ -201,11 +211,11 @@ export class RoomAvailabilityService {
         by: ['roomTypeId'],
         where: {
           hotelId,
-          status: 'AVAILABLE'
+          status: 'AVAILABLE',
         },
         _count: {
-          id: true
-        }
+          id: true,
+        },
       })
 
       const roomTypesWithCounts = await Promise.all(
@@ -216,12 +226,12 @@ export class RoomAvailabilityService {
               id: true,
               name: true,
               basePrice: true,
-              maxOccupancy: true
-            }
+              maxOccupancy: true,
+            },
           })
           return {
             ...roomType,
-            totalRooms: count._count.id
+            totalRooms: count._count.id,
           }
         })
       )
