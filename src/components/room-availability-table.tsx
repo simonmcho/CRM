@@ -28,7 +28,12 @@ interface RoomAvailabilityTableProps {
   checkIn: string
   checkOut: string
   selectedRoom?: string | null
-  onRoomSelect?: (room: AvailableRoom | null, date: string) => void
+  dailyRoomSelections?: Array<{ date: string; room: AvailableRoom | null }>
+  onRoomSelect?: (
+    room: AvailableRoom | null,
+    date: string,
+    enablePerDayMode?: boolean
+  ) => void
 }
 
 interface DayAvailability {
@@ -42,11 +47,23 @@ interface RoomWeekAvailability {
   days: DayAvailability[]
 }
 
-function generateWeekDates(startDate: string): string[] {
+function generateBookingPeriodDates(
+  startDate: string,
+  endDate: string
+): string[] {
   const dates = []
   const start = new Date(startDate + 'T12:00:00Z') // Use noon UTC to avoid timezone shifts
+  const end = new Date(endDate + 'T12:00:00Z')
 
-  for (let i = 0; i < 7; i++) {
+  // Calculate the number of days in the booking period
+  const diffTime = end.getTime() - start.getTime()
+  const bookingDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+
+  // Show minimum 7 days, but if booking is longer, show the full period
+  const daysToShow = Math.max(7, bookingDays)
+
+  // Generate dates for the display period
+  for (let i = 0; i < daysToShow; i++) {
     const date = new Date(start)
     date.setUTCDate(start.getUTCDate() + i) // Use UTC date methods
     dates.push(date.toISOString().split('T')[0])
@@ -69,6 +86,7 @@ export function RoomAvailabilityTable({
   checkIn,
   checkOut,
   selectedRoom: externalSelectedRoom = null,
+  dailyRoomSelections = [],
   onRoomSelect,
 }: RoomAvailabilityTableProps) {
   const [roomAvailability, setRoomAvailability] = useState<
@@ -85,9 +103,17 @@ export function RoomAvailabilityTable({
     setSelectedRoom(externalSelectedRoom)
   }, [externalSelectedRoom])
 
-  const weekDates = useMemo(() => generateWeekDates(checkIn), [checkIn])
+  const bookingDates = useMemo(
+    () => generateBookingPeriodDates(checkIn, checkOut),
+    [checkIn, checkOut]
+  )
 
   const checkWeekAvailability = useCallback(async () => {
+    console.log('Checking week availability for:', {
+      hotelId,
+      checkIn,
+      checkOut,
+    })
     if (!hotelId || !checkIn || !checkOut) return
 
     setLoading(true)
@@ -131,7 +157,7 @@ export function RoomAvailabilityTable({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             hotelId,
-            dates: weekDates,
+            dates: bookingDates,
             roomIds,
           }),
         }
@@ -145,14 +171,12 @@ export function RoomAvailabilityTable({
 
       console.log('Daily availability response:', {
         hotelId,
-        dates: weekDates,
+        dates: bookingDates,
         roomCount: sortedRooms.length,
         availability: dailyAvailability,
-      })
-
-      // Transform the data into the expected format
+      }) // Transform the data into the expected format
       const results = sortedRooms.map((room) => {
-        const days = weekDates.map((date) => ({
+        const days = bookingDates.map((date) => ({
           date,
           available: dailyAvailability[date]?.[room.id] ?? false,
           rooms: dailyAvailability[date]?.[room.id] ? [room] : [],
@@ -167,7 +191,7 @@ export function RoomAvailabilityTable({
     } finally {
       setLoading(false)
     }
-  }, [hotelId, checkIn, checkOut, weekDates])
+  }, [hotelId, checkIn, checkOut, bookingDates])
 
   // Automatically load data when component mounts or props change
   useEffect(() => {
@@ -184,6 +208,48 @@ export function RoomAvailabilityTable({
   ) => {
     if (!available) return // Can't select unavailable cells
 
+    // If we're in per-day selection mode, allow individual cell selection
+    if (dailyRoomSelections && dailyRoomSelections.length > 0) {
+      console.log(`Per-day mode: selecting room ${room.number} for ${date}`)
+      onRoomSelect?.(room, date)
+      return
+    }
+
+    // Check if room is available for the entire booking period
+    if (!isRoomAvailableForPeriod(room.id)) {
+      console.log(
+        `Room ${room.number} is not available for the entire booking period`
+      )
+
+      // Find which dates are unavailable for this room
+      const roomData = roomAvailability.find((ra) => ra.room.id === room.id)
+      const startDate = new Date(checkIn + 'T12:00:00Z')
+      const endDate = new Date(checkOut + 'T12:00:00Z')
+
+      const unavailableDates =
+        roomData?.days
+          .filter((day) => {
+            const dayDate = new Date(day.date + 'T12:00:00Z')
+            return dayDate >= startDate && dayDate < endDate && !day.available
+          })
+          .map((day) => day.date) || []
+
+      const unavailableDatesFormatted = unavailableDates
+        .map((date) => new Date(date + 'T12:00:00Z').toLocaleDateString())
+        .join(', ')
+
+      // Prompt user for day-by-day selection
+      const userWantsPerDaySelection = confirm(
+        `Room ${room.number} is not available for the following dates: ${unavailableDatesFormatted}.\n\nWould you like to select different rooms for specific days?`
+      )
+
+      if (userWantsPerDaySelection) {
+        // Enable per-day selection mode by calling the parent with special flag
+        onRoomSelect?.(room, date, true) // true indicates starting per-day selection mode
+      }
+      return
+    }
+
     // If clicking on already selected room, unselect it
     if (selectedRoom === room.id) {
       setSelectedRoom(null)
@@ -191,12 +257,9 @@ export function RoomAvailabilityTable({
       return
     }
 
-    // Check if room is available for the entire booking period
-    const roomAvailableForPeriod = isRoomAvailableForPeriod(room.id)
-    if (roomAvailableForPeriod) {
-      setSelectedRoom(room.id)
-      onRoomSelect?.(room, date)
-    }
+    // Allow room selection only if available for entire period
+    setSelectedRoom(room.id)
+    onRoomSelect?.(room, date)
   }
 
   // Check if a cell should be highlighted as part of the booking range
@@ -228,16 +291,40 @@ export function RoomAvailabilityTable({
     })
   }
 
+  // Check if a specific room is selected for a specific date in daily selections
+  const isDailyRoomSelected = (roomId: string, date: string) => {
+    if (dailyRoomSelections.length === 0) return false
+    const selection = dailyRoomSelections.find((sel) => sel.date === date)
+    return selection?.room?.id === roomId
+  }
+
+  // Calculate dynamic cell width based on number of days
+  const calculateCellWidth = () => {
+    const numDays = bookingDates.length
+    if (numDays <= 7) {
+      return 'w-[120px] min-w-[120px]' // Comfortable width for 7 days or less
+    } else if (numDays <= 14) {
+      return 'w-[90px] min-w-[90px]' // Medium width for 8-14 days
+    } else if (numDays <= 21) {
+      return 'w-[70px] min-w-[70px]' // Smaller width for 15-21 days
+    } else {
+      return 'w-[60px] min-w-[60px]' // Minimal width for more than 21 days
+    }
+  }
+
+  const cellWidthClass = calculateCellWidth()
+
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className="w-full max-w-none">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            Weekly Room Availability
+            Room Availability for Booking Period
           </CardTitle>
           <CardDescription>
-            Check availability for the week starting from {formatDate(checkIn)}
+            Availability from {formatDate(checkIn)} to{' '}
+            {formatDate(checkOut)}{' '}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -248,19 +335,19 @@ export function RoomAvailabilityTable({
           )}
 
           {roomAvailability.length > 0 && (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
+            <div className="max-w-full overflow-x-auto">
+              <table className="w-full min-w-max border-collapse">
                 <thead>
                   <tr>
-                    <th className="min-w-[120px] border-b p-3 text-left font-semibold">
+                    <th className="sticky left-0 z-10 w-[140px] min-w-[140px] max-w-[140px] border-b bg-white p-2 text-left font-semibold">
                       Room
                     </th>
-                    {weekDates.map((date) => (
+                    {bookingDates.map((date) => (
                       <th
                         key={date}
-                        className="min-w-[100px] border-b p-3 text-center font-semibold"
+                        className={`${cellWidthClass} border-b p-1 text-center font-semibold`}
                       >
-                        <div className="text-sm">{formatDate(date)}</div>
+                        <div className="text-xs">{formatDate(date)}</div>
                       </th>
                     ))}
                   </tr>
@@ -268,7 +355,7 @@ export function RoomAvailabilityTable({
                 <tbody>
                   {roomAvailability.map(({ room, days }) => (
                     <tr key={room.id} className="hover:bg-muted/50">
-                      <td className="border-b p-3">
+                      <td className="sticky left-0 z-10 w-[140px] min-w-[140px] max-w-[140px] border-b bg-white p-2">
                         <div>
                           <div className="font-medium">Room {room.number}</div>
                           <div className="text-sm text-muted-foreground">
@@ -288,24 +375,26 @@ export function RoomAvailabilityTable({
                           room.id,
                           date
                         )
+                        const isDailySelected = isDailyRoomSelected(
+                          room.id,
+                          date
+                        )
+                        const isSelected = inBookingRange || isDailySelected
 
                         return (
-                          <td key={date} className="border-b p-1">
+                          <td
+                            key={date}
+                            className={`${cellWidthClass} border-b p-1`}
+                          >
                             <button
                               onClick={() => {
-                                console.log('Cell clicked:', {
-                                  roomId: room.id,
-                                  date,
-                                  available,
-                                  isSelected: selectedRoom === room.id,
-                                })
                                 handleCellClick(room, date, available)
                               }}
                               disabled={!available}
                               className={`
-                                h-12 w-full rounded text-xs font-medium transition-colors
+                                h-10 w-full rounded text-xs font-medium transition-colors
                                 ${
-                                  inBookingRange
+                                  isSelected
                                     ? 'bg-blue-500 text-white hover:bg-blue-600'
                                     : !available
                                       ? 'cursor-not-allowed bg-red-100 text-red-800'
@@ -315,7 +404,7 @@ export function RoomAvailabilityTable({
                                 }
                               `}
                             >
-                              {inBookingRange
+                              {isSelected
                                 ? 'Selected'
                                 : !available
                                   ? 'Booked'

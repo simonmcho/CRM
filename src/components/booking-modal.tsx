@@ -61,7 +61,7 @@ export function BookingModal({
 
       {/* Dialog */}
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] w-[95vw] max-w-[95vw] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calendar className="h-5 w-5" />

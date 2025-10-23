@@ -40,8 +40,13 @@ interface RoomAvailabilityCheckProps {
   checkIn?: string
   checkOut?: string
   selectedRoom?: AvailableRoom | null
+  dailyRoomSelections?: Array<{ date: string; room: AvailableRoom | null }>
   onDateChange?: (checkIn: string, checkOut: string) => void
-  onRoomSelect?: (room: AvailableRoom | null) => void
+  onRoomSelect?: (
+    room: AvailableRoom | null,
+    date: string,
+    enablePerDayMode?: boolean
+  ) => void
 }
 
 export function RoomAvailabilityCheck({
@@ -49,6 +54,7 @@ export function RoomAvailabilityCheck({
   checkIn: externalCheckIn = '',
   checkOut: externalCheckOut = '',
   selectedRoom: externalSelectedRoom = null,
+  dailyRoomSelections = [],
   onDateChange,
   onRoomSelect,
 }: RoomAvailabilityCheckProps) {
@@ -90,10 +96,10 @@ export function RoomAvailabilityCheck({
           checkIn={checkIn}
           checkOut={checkOut}
           selectedRoom={selectedRoom?.id || null}
-          onRoomSelect={(room, date) => {
-            console.log('Selected room:', room, 'for date:', date)
+          dailyRoomSelections={dailyRoomSelections}
+          onRoomSelect={(room, date, enablePerDayMode) => {
             setSelectedRoom(room)
-            onRoomSelect?.(room)
+            onRoomSelect?.(room, date, enablePerDayMode)
           }}
         />
       )}

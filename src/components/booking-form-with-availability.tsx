@@ -59,6 +59,11 @@ interface SelectedRoom {
   }
 }
 
+interface DailyRoomSelection {
+  date: string
+  room: SelectedRoom | null
+}
+
 export function BookingFormWithAvailability({
   onBookingAdded,
 }: BookingFormWithAvailabilityProps) {
@@ -69,6 +74,9 @@ export function BookingFormWithAvailability({
   const [selectedGuest, setSelectedGuest] = useState('')
   const [selectedHotel, setSelectedHotel] = useState('')
   const [selectedRoom, setSelectedRoom] = useState<SelectedRoom | null>(null)
+  const [dailyRoomSelections, setDailyRoomSelections] = useState<
+    DailyRoomSelection[]
+  >([])
   const [checkIn, setCheckIn] = useState('')
   const [checkOut, setCheckOut] = useState('')
   const [notes, setNotes] = useState('')
@@ -101,14 +109,89 @@ export function BookingFormWithAvailability({
   }, [])
 
   const handleRoomSelect = (room: SelectedRoom | null) => {
+    console.log('handleRoomSelect called with:', room)
     setSelectedRoom(room)
+    console.log('selectedRoom state set to:', room)
+    // Clear daily selections when a new room is selected
+    setDailyRoomSelections([])
+  }
+
+  // Function to check room availability (simplified version)
+  const checkRoomAvailabilityAndOfferAlternatives = async (roomId: string) => {
+    // For now, we don't auto-check availability on room selection
+    // This will be handled when the user submits the booking
+    console.log('Room selected:', roomId)
   }
 
   const handleDateChange = (newCheckIn: string, newCheckOut: string) => {
     setCheckIn(newCheckIn)
     setCheckOut(newCheckOut)
-    // Reset selected room when dates change
+    // Reset selected room and daily selections when dates change
     setSelectedRoom(null)
+    setDailyRoomSelections([])
+  }
+
+  // Initialize daily room selections when switching to per-day mode
+  const initializeDailySelections = (unavailableDates: string[]) => {
+    const dateRange = generateDateRange(checkIn, checkOut)
+    const dailySelections: DailyRoomSelection[] = dateRange.map((date) => ({
+      date,
+      room: unavailableDates.includes(date) ? null : selectedRoom,
+    }))
+    setDailyRoomSelections(dailySelections)
+  }
+
+  // Update a specific day's room selection
+  const updateDailyRoomSelection = (
+    date: string,
+    room: SelectedRoom | null
+  ) => {
+    setDailyRoomSelections((prev) =>
+      prev.map((selection) =>
+        selection.date === date ? { ...selection, room } : selection
+      )
+    )
+  }
+
+  // Handle individual cell clicks for per-day room selection
+  const handleCellRoomSelect = (
+    room: SelectedRoom | null,
+    date: string,
+    enablePerDayMode?: boolean
+  ) => {
+    console.log('Cell clicked:', { room: room?.number, date, enablePerDayMode })
+
+    if (enablePerDayMode) {
+      // User wants to enable per-day selection mode
+      console.log('Enabling per-day selection mode')
+
+      // Initialize daily selections for the date range
+      const dateRange = generateDateRange(checkIn, checkOut)
+      const dailySelections: DailyRoomSelection[] = dateRange.map(
+        (rangeDate) => ({
+          date: rangeDate,
+          room: rangeDate === date ? room : null, // Set the clicked room for the clicked date
+        })
+      )
+
+      setDailyRoomSelections(dailySelections)
+      setSelectedRoom(null) // Clear single room selection when entering per-day mode
+
+      // Show user guidance
+      alert(
+        'Per-day selection mode enabled. You can now click on individual cells to select different rooms for each day.'
+      )
+      return
+    }
+
+    // If we're in per-day mode, handle individual day selection
+    if (dailyRoomSelections.length > 0) {
+      updateDailyRoomSelection(date, room)
+      return
+    }
+
+    // Normal single room selection
+    handleRoomSelect(room)
   }
 
   const handleDateInputChange = (
@@ -132,39 +215,202 @@ export function BookingFormWithAvailability({
   }
 
   const calculateTotal = () => {
+    if (dailyRoomSelections.length > 0) {
+      return dailyRoomSelections.reduce(
+        (total, selection) => total + (selection.room?.roomType.basePrice || 0),
+        0
+      )
+    }
     if (!selectedRoom) return 0
     const nights = calculateNights()
     return selectedRoom.roomType.basePrice * nights
   }
 
+  // Check if selected room is available for the entire booking period
+  const checkRoomAvailabilityForPeriod = async (
+    roomId: string
+  ): Promise<{
+    available: boolean
+    unavailableDates: string[]
+    alternativeRooms: { [date: string]: SelectedRoom[] }
+  }> => {
+    if (!checkIn || !checkOut || !selectedHotel) {
+      return { available: false, unavailableDates: [], alternativeRooms: {} }
+    }
+
+    try {
+      // Get all rooms for the hotel
+      const roomsResponse = await fetch(`/api/rooms?hotelId=${selectedHotel}`)
+      if (!roomsResponse.ok) {
+        return { available: false, unavailableDates: [], alternativeRooms: {} }
+      }
+      const allRooms: SelectedRoom[] = await roomsResponse.json()
+
+      const dateRange = generateDateRange(checkIn, checkOut)
+      const allRoomIds = allRooms.map((room) => room.id)
+
+      const response = await fetch('/api/rooms/daily-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hotelId: selectedHotel,
+          dates: dateRange,
+          roomIds: allRoomIds,
+        }),
+      })
+
+      if (!response.ok) {
+        return { available: false, unavailableDates: [], alternativeRooms: {} }
+      }
+
+      const availability = await response.json()
+      const unavailableDates: string[] = []
+      const alternativeRooms: { [date: string]: SelectedRoom[] } = {}
+
+      // Check each date in the booking period
+      for (const date of dateRange) {
+        const isSelectedRoomAvailable = availability[date]?.[roomId]
+
+        if (!isSelectedRoomAvailable) {
+          unavailableDates.push(date)
+        }
+
+        // Find alternative rooms for each date
+        const availableRoomsForDate = allRooms.filter(
+          (room) => room.id !== roomId && availability[date]?.[room.id]
+        )
+        alternativeRooms[date] = availableRoomsForDate
+      }
+
+      return {
+        available: unavailableDates.length === 0,
+        unavailableDates,
+        alternativeRooms,
+      }
+    } catch (error) {
+      console.error('Error checking room availability:', error)
+      return { available: false, unavailableDates: [], alternativeRooms: {} }
+    }
+  }
+
+  // Helper function to generate date range
+  const generateDateRange = (startDate: string, endDate: string): string[] => {
+    const dates = []
+    const start = new Date(startDate + 'T12:00:00Z')
+    const end = new Date(endDate + 'T12:00:00Z')
+
+    while (start < end) {
+      dates.push(start.toISOString().split('T')[0])
+      start.setUTCDate(start.getUTCDate() + 1)
+    }
+
+    return dates
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (
-      !selectedGuest ||
-      !selectedHotel ||
-      !selectedRoom ||
-      !checkIn ||
-      !checkOut
-    ) {
-      console.log({
-        selectedGuest,
-        selectedHotel,
-        selectedRoom,
-        checkIn,
-        checkOut,
-      })
-      alert('Your starting date needs to be the same as the check-in date')
+    // Detailed validation with specific error messages
+    if (!selectedGuest) {
+      alert('Please select a guest for the booking.')
       return
     }
 
-    // Show confirmation dialog instead of immediately submitting
+    if (!selectedHotel) {
+      alert('Please select a hotel for the booking.')
+      return
+    }
+
+    if (!checkIn) {
+      alert('Please select a check-in date.')
+      return
+    }
+
+    if (!checkOut) {
+      alert('Please select a check-out date.')
+      return
+    }
+
+    // Validate date logic
+    const checkInDate = new Date(checkIn + 'T12:00:00Z')
+    const checkOutDate = new Date(checkOut + 'T12:00:00Z')
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    if (checkInDate < today) {
+      alert('Check-in date cannot be in the past.')
+      return
+    }
+
+    if (checkOutDate <= checkInDate) {
+      alert('Check-out date must be after the check-in date.')
+      return
+    }
+
+    // Check if we're using per-day selections or single room selection
+    if (dailyRoomSelections.length > 0) {
+      console.log('Using per-day selections, validating...')
+      // Validate that all days have room selections
+      const missingDays = dailyRoomSelections.filter(
+        (selection) => !selection.room
+      )
+      if (missingDays.length > 0) {
+        const missingDatesFormatted = missingDays
+          .map((selection) =>
+            new Date(selection.date + 'T12:00:00Z').toLocaleDateString()
+          )
+          .join(', ')
+        alert(
+          `Please select rooms for the following dates: ${missingDatesFormatted}`
+        )
+        return
+      }
+
+      // Show confirmation dialog for per-day booking
+      setShowConfirmation(true)
+      return
+    }
+
+    if (!selectedRoom) {
+      alert('Please select a room for your booking.')
+      return
+    }
+
+    // Check if the selected room is available for the entire date range
+    console.log('Checking room availability before booking...')
+    try {
+      const availability = await checkRoomAvailabilityForPeriod(selectedRoom.id)
+      if (!availability.available) {
+        if (availability.unavailableDates.length > 0) {
+          const unavailableDatesFormatted = availability.unavailableDates
+            .map((date) => new Date(date + 'T12:00:00Z').toLocaleDateString())
+            .join(', ')
+          alert(
+            `This room is not available for the following dates: ${unavailableDatesFormatted}. Please select a different room or change your dates.`
+          )
+        } else {
+          alert(
+            'This room is not available for your selected dates. Please select a different room or change your dates.'
+          )
+        }
+        return
+      }
+    } catch (error) {
+      console.error('Error checking room availability:', error)
+      alert('Error checking room availability. Please try again.')
+      return
+    }
+
+    // Show confirmation dialog
     setShowConfirmation(true)
   }
 
   const handleCancelBooking = () => {
+    console.log('handleCancelBooking called')
     setShowConfirmation(false)
-    setSelectedRoom(null) // Clear the selected room when canceling
+    // Clear selections when canceling
+    setSelectedRoom(null)
+    setDailyRoomSelections([])
   }
 
   const handleConfirmBooking = async () => {
@@ -172,40 +418,82 @@ export function BookingFormWithAvailability({
     setShowConfirmation(false)
 
     try {
-      const bookingData = {
-        guestId: selectedGuest,
-        hotelId: selectedHotel,
-        roomId: selectedRoom!.id,
-        checkIn: checkIn, // Send as YYYY-MM-DD string
-        checkOut: checkOut, // Send as YYYY-MM-DD string
-        totalAmount: calculateTotal(),
-        notes: notes.trim() || undefined,
-        status: 'CONFIRMED',
-      }
+      // Handle per-day bookings differently
+      if (dailyRoomSelections.length > 0) {
+        // For per-day bookings, create multiple bookings - one for each day
+        const bookingPromises = dailyRoomSelections.map(async (selection) => {
+          const nextDay = new Date(selection.date + 'T12:00:00Z')
+          nextDay.setUTCDate(nextDay.getUTCDate() + 1)
 
-      const response = await fetch('/api/bookings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(bookingData),
-      })
+          const bookingData = {
+            guestId: selectedGuest,
+            hotelId: selectedHotel,
+            roomId: selection.room!.id,
+            checkIn: selection.date,
+            checkOut: nextDay.toISOString().split('T')[0],
+            totalAmount: selection.room!.roomType.basePrice,
+            notes: notes.trim() || undefined,
+            status: 'CONFIRMED',
+          }
 
-      if (response.ok) {
-        // Reset form
-        setSelectedGuest('')
-        setSelectedHotel('')
-        setSelectedRoom(null)
-        setCheckIn('')
-        setCheckOut('')
-        setNotes('')
+          return fetch('/api/bookings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(bookingData),
+          })
+        })
 
-        alert('Booking created successfully!')
-        onBookingAdded?.()
+        const responses = await Promise.all(bookingPromises)
+        const failedBookings = responses.filter((response) => !response.ok)
+
+        if (failedBookings.length > 0) {
+          const errorData = await failedBookings[0].json()
+          alert(
+            `Error creating bookings: ${errorData.error || 'Unknown error'}`
+          )
+          return
+        }
       } else {
-        const errorData = await response.json()
-        alert(`Error creating booking: ${errorData.error || 'Unknown error'}`)
+        // Standard single-room booking
+        const bookingData = {
+          guestId: selectedGuest,
+          hotelId: selectedHotel,
+          roomId: selectedRoom!.id,
+          checkIn: checkIn,
+          checkOut: checkOut,
+          totalAmount: calculateTotal(),
+          notes: notes.trim() || undefined,
+          status: 'CONFIRMED',
+        }
+
+        const response = await fetch('/api/bookings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(bookingData),
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          alert(`Error creating booking: ${errorData.error || 'Unknown error'}`)
+          return
+        }
       }
+
+      // Reset form
+      setSelectedGuest('')
+      setSelectedHotel('')
+      setSelectedRoom(null)
+      setDailyRoomSelections([])
+      setCheckIn('')
+      setCheckOut('')
+      setNotes('')
+
+      alert('Booking created successfully!')
+      onBookingAdded?.()
     } catch (error) {
       console.error('Error creating booking:', error)
       alert('Error creating booking. Please try again.')
@@ -215,7 +503,7 @@ export function BookingFormWithAvailability({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="w-full max-w-none space-y-6">
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Date Selection - First Priority */}
         <Card>
@@ -309,8 +597,9 @@ export function BookingFormWithAvailability({
             checkIn={checkIn}
             checkOut={checkOut}
             selectedRoom={selectedRoom}
+            dailyRoomSelections={dailyRoomSelections}
             onDateChange={handleDateChange}
-            onRoomSelect={handleRoomSelect}
+            onRoomSelect={handleCellRoomSelect}
           />
         )}
 
@@ -327,52 +616,75 @@ export function BookingFormWithAvailability({
         </div>
 
         {/* Booking Summary */}
-        {selectedRoom && checkIn && checkOut && (
-          <Card className="bg-muted/50">
-            <CardHeader>
-              <CardTitle className="text-lg">Booking Summary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span>Guest:</span>
-                  <span className="font-medium">
-                    {guests.find((g) => g.id === selectedGuest)?.firstName}{' '}
-                    {guests.find((g) => g.id === selectedGuest)?.lastName}
-                  </span>
+        {(selectedRoom || dailyRoomSelections.length > 0) &&
+          checkIn &&
+          checkOut && (
+            <Card className="bg-muted/50">
+              <CardHeader>
+                <CardTitle className="text-lg">Booking Summary</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span>Guest:</span>
+                    <span className="font-medium">
+                      {guests.find((g) => g.id === selectedGuest)?.firstName}{' '}
+                      {guests.find((g) => g.id === selectedGuest)?.lastName}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Hotel:</span>
+                    <span className="font-medium">
+                      {hotels.find((h) => h.id === selectedHotel)?.name}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Room:</span>
+                    <div className="text-right font-medium">
+                      {dailyRoomSelections.length > 0 ? (
+                        <div className="space-y-1">
+                          {dailyRoomSelections.map((selection) => (
+                            <div key={selection.date} className="text-sm">
+                              {new Date(
+                                selection.date + 'T12:00:00Z'
+                              ).toLocaleDateString()}
+                              : Room {selection.room?.number} (
+                              {selection.room?.roomType.name})
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        `${selectedRoom?.number} (${selectedRoom?.roomType.name})`
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Dates:</span>
+                    <span className="font-medium">
+                      {checkIn} to {checkOut} (
+                      {dailyRoomSelections.length > 0
+                        ? dailyRoomSelections.length
+                        : calculateNights()}{' '}
+                      nights)
+                    </span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2 text-lg font-bold">
+                    <span>Total:</span>
+                    <span>${calculateTotal()}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Hotel:</span>
-                  <span className="font-medium">
-                    {hotels.find((h) => h.id === selectedHotel)?.name}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Room:</span>
-                  <span className="font-medium">
-                    {selectedRoom.number} ({selectedRoom.roomType.name})
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Dates:</span>
-                  <span className="font-medium">
-                    {checkIn} to {checkOut} ({calculateNights()} nights)
-                  </span>
-                </div>
-                <div className="flex justify-between border-t pt-2 text-lg font-bold">
-                  <span>Total:</span>
-                  <span>${calculateTotal()}</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+            </Card>
+          )}
 
         {/* Submit Button */}
         <Button
           type="submit"
           disabled={
-            isSubmitting || !selectedGuest || !selectedHotel || !selectedRoom
+            isSubmitting ||
+            !selectedGuest ||
+            !selectedHotel ||
+            (!selectedRoom && dailyRoomSelections.length === 0)
           }
           className="w-full"
         >
@@ -407,9 +719,23 @@ export function BookingFormWithAvailability({
               </div>
               <div>
                 <span className="font-medium">Room:</span>
-                <p className="text-muted-foreground">
-                  {selectedRoom?.number} ({selectedRoom?.roomType.name})
-                </p>
+                <div className="text-muted-foreground">
+                  {dailyRoomSelections.length > 0 ? (
+                    <div className="space-y-1">
+                      {dailyRoomSelections.map((selection) => (
+                        <div key={selection.date} className="text-xs">
+                          {new Date(
+                            selection.date + 'T12:00:00Z'
+                          ).toLocaleDateString()}
+                          : Room {selection.room?.number} (
+                          {selection.room?.roomType.name})
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    `${selectedRoom?.number} (${selectedRoom?.roomType.name})`
+                  )}
+                </div>
               </div>
               <div>
                 <span className="font-medium">Dates:</span>
@@ -425,9 +751,22 @@ export function BookingFormWithAvailability({
               </div>
               <div>
                 <span className="font-medium">Rate:</span>
-                <p className="text-muted-foreground">
-                  ${selectedRoom?.roomType.basePrice}/night
-                </p>
+                <div className="text-muted-foreground">
+                  {dailyRoomSelections.length > 0 ? (
+                    <div className="space-y-1">
+                      {dailyRoomSelections.map((selection) => (
+                        <div key={selection.date} className="text-xs">
+                          {new Date(
+                            selection.date + 'T12:00:00Z'
+                          ).toLocaleDateString()}
+                          : ${selection.room?.roomType.basePrice}/night
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    `$${selectedRoom?.roomType.basePrice}/night`
+                  )}
+                </div>
               </div>
             </div>
 
